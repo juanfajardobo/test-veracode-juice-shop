@@ -94,11 +94,16 @@ jobs:
             scan . \
             --quick \
             --json=sca-results.json \
+            --show-cli \
             --update-advisor \
             --scm-uri "${{ github.server_url }}/${{ github.repository }}" \
             --scm-rev "${{ github.sha }}" \
             --scm-ref "${{ github.ref_name }}"
-      
+            
+      - name: Debug files
+        run: |
+          ls -lah
+          
       - name: Check SCA results for high/critical issues
         if: always()
         run: |
@@ -112,12 +117,10 @@ jobs:
             fi
           fi
     
-      - name: Upload SCA results
-        if: always()
-        uses: actions/upload-artifact@v4
+      - name: Download SCA results
+        uses: actions/download-artifact@v4
         with:
-          name: sca-results
-          path: sca-results.json
+            name: sca-results
           
   # =============================================================================
   # SANDBOX SCAN: Upload completo a Veracode (solo para ramas release/*)
@@ -267,7 +270,7 @@ jobs:
 
       - name: Create issues from SCA
         run: |
-          cat sca-results.json | jq -c '.libraries[].vulnerabilities[]?' | while read vuln; do
+          cat sca-results.json | jq -c '.. | objects | select(has("severity"))' sca-results.json | while read vuln; do
             TITLE=$(echo $vuln | jq -r '.issue_id // "No-ID"')
             SEVERITY=$(echo $vuln | jq -r '.severity // "unknown"')
 
