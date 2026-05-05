@@ -92,9 +92,9 @@ jobs:
         run: |
           curl -sSL https://download.sourceclear.com/ci.sh | sh -s -- \
             scan . \
+            --quick \
             --json=sca-results.json \
             --update-advisor \
-            --project-name "${{ env.PROJECT_NAME }}" \
             --scm-uri "${{ github.server_url }}/${{ github.repository }}" \
             --scm-rev "${{ github.sha }}" \
             --scm-ref "${{ github.ref_name }}"
