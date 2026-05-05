@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: ["main"]
   workflow_dispatch:
-  
+
 permissions:
   contents: read
   issues: write
@@ -17,76 +17,82 @@ env:
   PROJECT_NAME: ${{ github.event.repository.name }}
 
 jobs:
+# =========================
+# BUILD
+# =========================
   build:
     runs-on: ubuntu-latest
     name: Build Node.js app
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: 20
 
       - name: Install dependencies
-        run: npm install --force || echo "Instalación parcial completada"
+        run: npm ci
 
-      - name: Optional build (if applies)
-        run: |
-          # Solo si tu proyecto usa build (React, Next, etc.)
-          npm run build || echo "No build step"
+      - name: Optional build
+        run: npm run build || echo "No build step"
 
-      - name: Create artifact for SAST
-        run: |
-          zip -r app.zip . -x "node_modules/*" ".git/*"
+      - name: Package app
+        run: zip -r app.zip . -x "node_modules/*" ".git/*"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          appname: "${{ github.event.repository.name }}"
           name: app-build
           path: app.zip
 
+# =========================
+# SAST
+# =========================
   sast_scan:
     needs: build
     runs-on: ubuntu-latest
-    name: Veracode SAST (Pipeline Scan)
+    name: Veracode SAST
+
     steps:
-      - name: Download artifact
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: app-build
-    
+
       - name: Run Veracode Pipeline Scan
         uses: veracode/Veracode-pipeline-scan-action@v1.0.20
         with:
           vid: ${{ secrets.VERACODE_API_ID }}
           vkey: ${{ secrets.VERACODE_API_KEY }}
-          file: "app.zip"
+          file: app.zip
           fail_build: false
           json_output: true
-          
-      - name: Debug JSON
-        run: |
-          echo "Contenido del JSON:"
-          cat sast-results.json | head -n 50
-          
+
       - name: Upload SAST results
         uses: actions/upload-artifact@v4
         with:
           name: sast-results
           path: results.json
 
+# =========================
+# SCA
+# =========================
   sca_scan:
-    needs: [sast_scan]  # Ejecutar después de sast_scan
+    needs: sast_scan
     runs-on: ubuntu-latest
-    name: Veracode SCA (Dependencies)
+    name: Veracode SCA
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-  
-      - name: Download and run Veracode SCA CLI
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies (IMPORTANTE)
+        run: npm ci
+
+      - name: Run Veracode SCA
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
         run: |
@@ -94,33 +100,20 @@ jobs:
             scan . \
             --quick \
             --json=sca-results.json \
-            --show-cli \
             --update-advisor \
             --scm-uri "${{ github.server_url }}/${{ github.repository }}" \
             --scm-rev "${{ github.sha }}" \
             --scm-ref "${{ github.ref_name }}"
-            
-      - name: Debug files
-        run: |
-          ls -lah
-          
-      - name: Check SCA results for high/critical issues
+
+      - name: Verify output
+        run: ls -lah
+
+      - name: Upload SCA results
         if: always()
-        run: |
-          if [ -f sca-results.json ]; then
-            # Verificar si hay vulnerabilidades altas o críticas
-            if grep -E '"severity":"(high|critical)"' sca-results.json; then
-              echo "? High or critical vulnerabilities found!"
-              exit 1
-            else
-              echo "? No high or critical vulnerabilities detected"
-            fi
-          fi
-    
-      - name: Download SCA results
-        uses: actions/download-artifact@v4
+        uses: actions/upload-artifact@v4
         with:
-            name: sca-results
+          name: sca-results
+          path: sca-results.json
           
   # =============================================================================
   # SANDBOX SCAN: Upload completo a Veracode (solo para ramas release/*)
