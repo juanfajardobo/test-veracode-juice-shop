@@ -248,13 +248,22 @@ jobs:
       contents: read
 
     steps:
-      - name: Download SCA results
-        uses: actions/download-artifact@v4
+      - name: Upload SCA results
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: sca-results
+          path: sca-results.json
+      
+      - name: Fail pipeline if high/critical
+        run: |
+          if grep -E '"severity":"(high|critical)"' sca-results.json; then
+            echo "High or critical vulnerabilities found!"
+            exit 1
+          fi
       - name: Check paths
         run: |
-          jq 'paths' sca-results.json | head
+          jq '.. | objects | select(has("severity"))' sca-results.json | head
 
       - name: Create issues from SCA
         run: |
