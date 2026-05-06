@@ -298,3 +298,4 @@ jobs:
             else
               echo "Issue ya existe: $TITLE"
             fi
+          done
