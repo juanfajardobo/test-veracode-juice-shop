@@ -261,37 +261,42 @@ jobs:
   
       - name: Create issues from SCA
         run: |
-          jq -c '.. | objects | select(has("vulnerabilities"))' sca-results.json | while read obj; do
-            
-            LIB=$(echo "$obj" | jq -r '.libraryName // "unknown"')
-            
-            echo "$obj" | jq -r '.vulnerabilities[] | @base64' | while read vuln64; do
-              
-              vuln=$(echo "$vuln64" | base64 -d)
+          jq -r '
+            .graphs[]?.directs[]? as $dep
+            | $dep.vulnerabilities[]? 
+            | @base64
+          ' sca-results.json | while read vuln64; do
       
-              TITLE=$(echo "$vuln" | jq -r '.issue_id // .cve // "SCA Vulnerability"')
-              CVSS=$(echo "$vuln" | jq -r '.cvssScore // "N/A"')
+            vuln=$(echo "$vuln64" | base64 -d)
       
-              echo "Procesando: $TITLE - CVSS: $CVSS - $LIB"
+            TITLE=$(echo "$vuln" | jq -r '.issue_id // .cve // "SCA Vulnerability"')
+            CVSS=$(echo "$vuln" | jq -r '.cvssScore // "N/A"')
       
-              # Evitar duplicados
-              EXIST=$(curl -s \
-                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            echo "Procesando: $TITLE - CVSS: $CVSS"
+      
+            # Opcional: filtrar por severidad real
+            if [[ "$CVSS" != "N/A" ]] && (( $(echo "$CVSS < 7" | bc -l) )); then
+              echo "Ignorado (CVSS bajo)"
+              continue
+            fi
+      
+            # Evitar duplicados
+            EXIST=$(curl -s \
+              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/${{ github.repository }}/issues \
+              | jq -r '.[].title' | grep -Fx "SCA: $TITLE" || true)
+      
+            if [ -z "$EXIST" ]; then
+              curl -s -X POST \
                 https://api.github.com/repos/${{ github.repository }}/issues \
-                | jq -r '.[].title' | grep -Fx "SCA: $TITLE" || true)
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                -H "Accept: application/vnd.github+json" \
+                -d "{
+                  \"title\": \"SCA: $TITLE\",
+                  \"body\": \"CVSS: $CVSS\nSource: Veracode SCA\"
+                }"
+            else
+              echo "Issue ya existe: $TITLE"
+            fi
       
-              if [ -z "$EXIST" ]; then
-                curl -s -X POST \
-                  https://api.github.com/repos/${{ github.repository }}/issues \
-                  -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                  -H "Accept: application/vnd.github+json" \
-                  -d "{
-                    \"title\": \"SCA: $TITLE\",
-                    \"body\": \"Package: $LIB\nCVSS: $CVSS\nSource: Veracode SCA\"
-                  }"
-              else
-                echo "Issue ya existe: $TITLE"
-              fi
-      
-            done
           done
