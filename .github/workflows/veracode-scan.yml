@@ -261,11 +261,7 @@ jobs:
   
       - name: Create issues from SCA
         run: |
-          jq -r '
-            .graphs[]?.directs[]? as $dep
-            | $dep.vulnerabilities[]? 
-            | @base64
-          ' sca-results.json | while read vuln64; do
+          while read vuln64; do
       
             vuln=$(echo "$vuln64" | base64 -d)
       
@@ -274,13 +270,11 @@ jobs:
       
             echo "Procesando: $TITLE - CVSS: $CVSS"
       
-            # Opcional: filtrar por severidad real
             if [[ "$CVSS" != "N/A" ]] && (( $(echo "$CVSS < 7" | bc -l) )); then
               echo "Ignorado (CVSS bajo)"
               continue
             fi
       
-            # Evitar duplicados
             EXIST=$(curl -s \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
               https://api.github.com/repos/${{ github.repository }}/issues \
@@ -299,4 +293,10 @@ jobs:
               echo "Issue ya existe: $TITLE"
             fi
       
-          done
+          done < <(
+            jq -r '
+              .graphs[]?.directs[]?
+              | .vulnerabilities[]?
+              | @base64
+            ' sca-results.json
+          )
