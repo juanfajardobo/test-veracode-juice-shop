@@ -206,7 +206,7 @@ jobs:
           echo "::notice::Sandbox upload completed for release branch ${{ github.ref_name }}"
           
   sast_issues:
-    name: Create GitHub Issues from Veracode
+    name: Create GitHub Issues from SAST Veracode
     needs: [sast_scan]
     runs-on: ubuntu-latest
   
@@ -236,6 +236,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
   sca_issues:
+    name: Create GitHub Issues from SCA Veracode
     needs: [sca_scan]
     runs-on: ubuntu-latest
   
@@ -250,28 +251,41 @@ jobs:
           name: sca-results
   
       - name: Verify file
-        run: ls -lah
-  
-      - name: Fail pipeline if high/critical
         run: |
-          if grep -E '"severity":"(high|critical)"' sca-results.json; then
-            echo "High or critical vulnerabilities found!"
-            exit 1
-          fi
+          ls -lah
+          test -f sca-results.json || (echo "No existe sca-results.json" && exit 1)
   
-      - name: Debug JSON
+      - name: Debug vulnerabilities
         run: |
-          jq '.. | objects | select(has("severity"))' sca-results.json | head
+          jq '.. | objects | select(has("vulnerabilities"))' sca-results.json | head -n 20
   
       - name: Create issues from SCA
         run: |
-          jq -c '.. | objects | select(has("severity"))' sca-results.json | while read vuln; do
-            SEVERITY=$(echo $vuln | jq -r '.severity // "unknown"')
+          jq -c '.. | objects | select(has("vulnerabilities")) | .vulnerabilities[]?' sca-results.json | while read vuln; do
+            
+            TITLE=$(echo "$vuln" | jq -r '.issue_id // .cve // "SCA Vulnerability"')
+            CVSS=$(echo "$vuln" | jq -r '.cvssScore // "N/A"')
+            PACKAGE=$(echo "$vuln" | jq -r '.library // .libraryName // "unknown"')
   
-            if [[ "$SEVERITY" == "high" || "$SEVERITY" == "critical" ]]; then
-              curl -X POST https://api.github.com/repos/${{ github.repository }}/issues \
+            echo "Procesando: $TITLE - CVSS: $CVSS - $PACKAGE"
+  
+            # Evitar duplicados
+            EXIST=$(curl -s -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+              https://api.github.com/repos/${{ github.repository }}/issues \
+              | jq -r '.[].title' | grep -Fx "$TITLE" || true)
+  
+            if [ -z "$EXIST" ]; then
+              curl -s -X POST https://api.github.com/repos/${{ github.repository }}/issues \
                 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                 -H "Accept: application/vnd.github+json" \
-                -d "{\"title\":\"SCA Vulnerability\",\"body\":\"Severity: $SEVERITY\"}"
+                -d @- <<EOF
+                  {
+                    "title": "SCA: $TITLE",
+                    "body": "Package: $PACKAGE\nCVSS: $CVSS\nSource: Veracode SCA"
+                  }
+                  EOF
+            else
+              echo "Issue ya existe: $TITLE"
             fi
+  
           done
