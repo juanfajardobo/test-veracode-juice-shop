@@ -261,23 +261,23 @@ jobs:
   
       - name: Create issues from SCA
         run: |
-          while read vuln64; do
+          jq -c '.. | .vulnerabilities? // empty | .[]' sca-results.json | while read vuln; do
       
-            vuln=$(echo "$vuln64" | base64 -d)
-      
-            TITLE=$(echo "$vuln" | jq -r '.issue_id // .cve // "SCA Vulnerability"')
+            TITLE=$(echo "$vuln" | jq -r '.cve // .issue_id // "SCA Vulnerability"')
             CVSS=$(echo "$vuln" | jq -r '.cvssScore // "N/A"')
       
             echo "Procesando: $TITLE - CVSS: $CVSS"
       
+            # Filtrar CVSS
             if [[ "$CVSS" != "N/A" ]] && (( $(echo "$CVSS < 7" | bc -l) )); then
               echo "Ignorado (CVSS bajo)"
               continue
             fi
       
+            # Evitar duplicados (más eficiente: solo open issues)
             EXIST=$(curl -s \
               -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              https://api.github.com/repos/${{ github.repository }}/issues \
+              "https://api.github.com/repos/${{ github.repository }}/issues?state=open&per_page=100" \
               | jq -r '.[].title' | grep -Fx "SCA: $TITLE" || true)
       
             if [ -z "$EXIST" ]; then
@@ -285,18 +285,12 @@ jobs:
                 https://api.github.com/repos/${{ github.repository }}/issues \
                 -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
                 -H "Accept: application/vnd.github+json" \
-                -d "{
-                  \"title\": \"SCA: $TITLE\",
-                  \"body\": \"CVSS: $CVSS\nSource: Veracode SCA\"
-                }"
+                -d "$(jq -n \
+                  --arg title "SCA: $TITLE" \
+                  --arg body "CVSS: $CVSS\nSource: Veracode SCA" \
+                  '{title: $title, body: $body}')"
             else
               echo "Issue ya existe: $TITLE"
             fi
       
-          done < <(
-            jq -r '
-              .graphs[]?.directs[]?
-              | .vulnerabilities[]?
-              | @base64
-            ' sca-results.json
-          )
+          done
