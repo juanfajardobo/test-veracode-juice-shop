@@ -257,11 +257,14 @@ jobs:
   
       - name: Debug vulnerabilities
         run: |
-          jq '.. | objects | select(has("vulnerabilities"))' sca-results.json
+          jq '.. | objects | select(has("vulnerabilities"))' sca-results.json | head -n 10
   
       - name: Create issues from SCA
+        shell: bash
         run: |
-          jq -c '.. | .vulnerabilities? // empty | .[]' sca-results.json | while read vuln; do
+          jq -r '.. | .vulnerabilities? // empty | .[] | @base64' sca-results.json | while read -r vuln64; do
+      
+            vuln=$(echo "$vuln64" | base64 -d)
       
             TITLE=$(echo "$vuln" | jq -r '.cve // .issue_id // "SCA Vulnerability"')
             CVSS=$(echo "$vuln" | jq -r '.cvssScore // "N/A"')
@@ -274,11 +277,14 @@ jobs:
               continue
             fi
       
-            # Evitar duplicados (más eficiente: solo open issues)
-            EXIST=$(curl -s \
-              -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-              "https://api.github.com/repos/${{ github.repository }}/issues?state=open&per_page=100" \
-              | jq -r '.[].title' | grep -Fx "SCA: $TITLE" || true)
+            # Obtener issues una sola vez (mejora rendimiento)
+            if [ -z "$ISSUES_CACHE" ]; then
+              ISSUES_CACHE=$(curl -s \
+                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+                "https://api.github.com/repos/${{ github.repository }}/issues?state=open&per_page=100")
+            fi
+      
+            EXIST=$(echo "$ISSUES_CACHE" | jq -r '.[].title' | grep -Fx "SCA: $TITLE" || true)
       
             if [ -z "$EXIST" ]; then
               curl -s -X POST \
@@ -292,5 +298,3 @@ jobs:
             else
               echo "Issue ya existe: $TITLE"
             fi
-      
-          done
