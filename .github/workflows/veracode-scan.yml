@@ -257,7 +257,7 @@ jobs:
   
       - name: Debug vulnerabilities
         run: |
-          jq '.. | objects | select(has("vulnerabilities"))' sca-results.json | head -n 20
+          jq '.. | objects | select(has("vulnerabilities"))' sca-results.json
   
       - name: Create issues from SCA
         run: |
