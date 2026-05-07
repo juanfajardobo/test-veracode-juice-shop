@@ -55,7 +55,7 @@ jobs:
       - uses: actions/checkout@v4
   
       - name: Run Veracode SCA
-        uses: veracode/veracode-sca@v2
+        uses: veracode/veracode-sca@v2.1.18
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           create-issues: true
