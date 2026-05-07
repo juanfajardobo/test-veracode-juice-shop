@@ -83,87 +83,67 @@ jobs:
   # =============================================================================
   # SANDBOX SCAN: Upload completo a Veracode (solo para ramas release/*)
   # =============================================================================
-  sandbox-scan:
-    name: Sandbox Upload (Release branches)
-    #needs: build  # Necesita el app_name del job build
-    needs: [sca_scan]  # Ejecutar después de sast_scan
+  veracode-scan:
+    name: Veracode Upload
+    needs: [build, sca_scan]
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
         with:
-          node-version: '18'
+          name: app-build
 
-      - name: Install dependencies
-        run: npm install --force || echo "Instalación parcial completada"
-
-      - name: Build for Sandbox Upload
-        run: |
-          npm run build || echo "No build step"
-          
-      - name: Create complete package for Sandbox
-        run: |
-          mkdir -p verascan
-          # Crear un zip completo excluyendo node_modules y .git
-          zip -r verascan/app-sandbox.zip . -x "node_modules/*" ".git/*" "verascan/*"
-          echo "Artefacto creado para Sandbox:"
-          ls -lh verascan/
+      - name: Verify files
+        run: ls -lah
 
       - name: Download Veracode Java API Wrapper
         run: |
           mkdir -p .veracode
+
           VERSION=$(curl -sS https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/maven-metadata.xml | grep -oPm1 "(?<=<latest>)[^<]+")
+
           if [ -z "$VERSION" ]; then
             echo "::error::No se pudo obtener la version del API Wrapper"
             exit 1
           fi
           echo "Descargando version: $VERSION"
-          curl -sSL "https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/${VERSION}/vosp-api-wrappers-java-${VERSION}-dist.zip" -o .veracode/dist.zip
-          cd .veracode && unzip -o dist.zip && cd ..
+          curl -sSL \
+            "https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/${VERSION}/vosp-api-wrappers-java-${VERSION}-dist.zip" \
+            -o .veracode/dist.zip
+
+          cd .veracode
+          unzip -o dist.zip
+          cd ..
+
           JAR_PATH=$(find .veracode -type f -name "VeracodeJavaAPI*.jar" | head -n1)
+
           if [ -z "$JAR_PATH" ]; then
             echo "::error::No se encontro VeracodeJavaAPI.jar"
             exit 1
           fi
-          cp "$JAR_PATH" vosp-api-wrapper-java.jar
-          chmod +x vosp-api-wrapper-java.jar
 
-      - name: Upload to Veracode Sandbox
+          cp "$JAR_PATH" vosp-api-wrapper-java.jar
+
+      - name: Upload to Veracode
+        env:
+          VERACODE_API_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY: ${{ secrets.VERACODE_API_KEY }}
+
         run: |
-          echo "=========================================="
-          echo "Subiendo artefactos a Veracode Sandbox..."
-          echo "App Name: ${{ github.event.repository.name }}"
-          echo "Sandbox: github-release"
-          echo "Release: Release ${{ github.run_number }}"
-          echo "=========================================="
-          
           java -jar vosp-api-wrapper-java.jar \
-            -vid $VERACODE_API_ID \
-            -vkey $VERACODE_API_KEY \
+            -vid "$VERACODE_API_ID" \
+            -vkey "$VERACODE_API_KEY" \
             -action UploadAndScan \
             -appname "${{ github.event.repository.name }}" \
             -createprofile true \
             -autoscan true \
-            -createsandbox true \
-            -filepath "verascan" \
-            -version "Release ${{ github.run_number }}"
-          
-      - name: Get Sandbox Scan Status (opcional)
-        if: always()
-        run: |
-          echo "⏳ El escaneo en Sandbox puede tomar varios minutos/horas"
-          echo "🔍 Para ver el progreso, visita el portal de Veracode"
-          echo "📝 Build Number: ${{ github.run_number }}"
-          echo "🌿 Branch: ${{ github.ref_name }}"
-
-      - name: Notify completion (opcional)
-        if: always()
-        run: |
-          echo "::notice::Sandbox upload completed for release branch ${{ github.ref_name }}"
+            -filepath "app.zip" \
+            -version "Release-${{ github.run_number }}"
           
   sast_issues:
     name: Create GitHub Issues from SAST Veracode
