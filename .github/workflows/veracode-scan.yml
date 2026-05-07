@@ -59,9 +59,9 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           create-issues: true
-          recursive: true
-          allow-dirty: true
-  
+          recursive: false
+          quick: true
+          allow-dirty: true 
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
 
