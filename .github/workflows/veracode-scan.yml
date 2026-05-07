@@ -20,13 +20,13 @@ jobs:
 
   build:
     runs-on: ubuntu-latest
-    name: Build Node.js app
+    name: Build  app.zip
 
     steps:
       - uses: actions/checkout@v4
 
       - name: Package app
-        run: zip -r app.zip . -x "node_modules/*" ".git/*"
+        run: zip -r app.zip . -x "node_modules/*" ".git/*"  ".github/*" "test/*"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
@@ -79,13 +79,10 @@ jobs:
           allow-dirty: true 
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
-          
-  # =============================================================================
-  # SANDBOX SCAN: Upload completo a Veracode (solo para ramas release/*)
-  # =============================================================================
+  
   veracode-scan:
     name: Veracode Upload
-    needs: [build, sca_scan]
+    needs: sca_scan
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
@@ -143,6 +140,7 @@ jobs:
             -createprofile true \
             -autoscan true \
             -filepath "app.zip" \
+            -deleteincompletescan 1 \
             -version "Release-${{ github.run_number }}"
           
   sast_issues:
