@@ -17,25 +17,13 @@ env:
   PROJECT_NAME: ${{ github.event.repository.name }}
 
 jobs:
-# =========================
-# BUILD
-# =========================
+
   build:
     runs-on: ubuntu-latest
     name: Build Node.js app
 
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Optional build
-        run: npm run build || echo "No build step"
 
       - name: Package app
         run: zip -r app.zip . -x "node_modules/*" ".git/*"
@@ -46,29 +34,7 @@ jobs:
           name: app-build
           path: app.zip
 
-          
-  sca_scan_flow:
-    runs-on: ubuntu-latest
-    name: Veracode SCA
-  
-    steps:
-      - uses: actions/checkout@v4
-  
-      - name: Run Veracode SCA
-        uses: veracode/veracode-sca@v2.1.18
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          create-issues: true
-          recursive: false
-          quick: true
-          allow-dirty: true 
-        env:
-          SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
-
-
-# =========================
 # SAST
-# =========================
   sast_scan:
     needs: build
     runs-on: ubuntu-latest
@@ -87,6 +53,7 @@ jobs:
           file: app.zip
           fail_build: false
           json_output: true
+          issue_details: true
 
       - name: Upload SAST results
         uses: actions/upload-artifact@v4
@@ -94,46 +61,24 @@ jobs:
           name: sast-results
           path: results.json
           
-# =========================
-# SCA
-# =========================
   sca_scan:
-    needs: sast_scan
+    needs: build
     runs-on: ubuntu-latest
     name: Veracode SCA
-
+  
     steps:
       - uses: actions/checkout@v4
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install dependencies (IMPORTANTE)
-        run: npm ci
-
+  
       - name: Run Veracode SCA
+        uses: veracode/veracode-sca@v2.1.18
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          create-issues: true
+          recursive: false
+          quick: true
+          allow-dirty: true 
         env:
           SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
-        run: |
-          curl -sSL https://download.sourceclear.com/ci.sh | sh -s -- \
-            scan . \
-            --quick \
-            --json=sca-results.json \
-            --update-advisor \
-            --scm-uri "${{ github.server_url }}/${{ github.repository }}" \
-            --scm-rev "${{ github.sha }}" \
-            --scm-ref "${{ github.ref_name }}"
-
-      - name: Verify output
-        run: ls -lah
-
-      - name: Upload SCA results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: sca-results
-          path: sca-results.json
           
   # =============================================================================
   # SANDBOX SCAN: Upload completo a Veracode (solo para ramas release/*)
@@ -207,11 +152,6 @@ jobs:
             -filepath "verascan" \
             -version "Release ${{ github.run_number }}"
           
-          echo "=========================================="
-          echo "✅ Upload completado!"
-          echo "📊 Ver resultados en: https://analysiscenter.veracode.com"
-          echo "=========================================="
-
       - name: Get Sandbox Scan Status (opcional)
         if: always()
         run: |
@@ -227,7 +167,7 @@ jobs:
           
   sast_issues:
     name: Create GitHub Issues from SAST Veracode
-    needs: [sast_scan]
+    needs: sast_scan
     runs-on: ubuntu-latest
   
     permissions:
@@ -249,7 +189,7 @@ jobs:
             exit 0
           fi
         
-      - name: Create Issues from Veracode results
+      - name: Create Issues SAST results
         uses: veracode/veracode-flaws-to-issues@v2.1.19
         with:
           scan-results-json: "results.json"
