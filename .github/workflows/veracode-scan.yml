@@ -241,61 +241,20 @@ jobs:
     runs-on: ubuntu-latest
   
     permissions:
-      issues: write
       contents: read
+      issues: write
   
     steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+  
       - name: Download SCA results
         uses: actions/download-artifact@v4
         with:
           name: sca-results
   
-      - name: Verify file
-        run: |
-          ls -lah
-          test -f sca-results.json || (echo "No existe sca-results.json" && exit 1)
-  
-      - name: Debug vulnerabilities
-        run: |
-          jq '.. | objects | select(has("vulnerabilities"))' sca-results.json | head -n 10
-  
-      - name: Create issues from SCA
-        shell: bash
-        run: |
-          jq -r '.. | .vulnerabilities? // empty | .[] | @base64' sca-results.json | while read -r vuln64; do
-      
-            vuln=$(echo "$vuln64" | base64 -d)
-      
-            TITLE=$(echo "$vuln" | jq -r '.cve // .issue_id // "SCA Vulnerability"')
-            CVSS=$(echo "$vuln" | jq -r '.cvssScore // "N/A"')
-      
-            echo "Procesando: $TITLE - CVSS: $CVSS"
-      
-            # Filtrar CVSS
-            if [[ "$CVSS" != "N/A" ]] && (( $(echo "$CVSS < 7" | bc -l) )); then
-              echo "Ignorado (CVSS bajo)"
-              continue
-            fi
-      
-            # Obtener issues una sola vez (mejora rendimiento)
-            if [ -z "$ISSUES_CACHE" ]; then
-              ISSUES_CACHE=$(curl -s \
-                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                "https://api.github.com/repos/${{ github.repository }}/issues?state=open&per_page=100")
-            fi
-      
-            EXIST=$(echo "$ISSUES_CACHE" | jq -r '.[].title' | grep -Fx "SCA: $TITLE" || true)
-      
-            if [ -z "$EXIST" ]; then
-              curl -s -X POST \
-                https://api.github.com/repos/${{ github.repository }}/issues \
-                -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
-                -H "Accept: application/vnd.github+json" \
-                -d "$(jq -n \
-                  --arg title "SCA: $TITLE" \
-                  --arg body "CVSS: $CVSS\nSource: Veracode SCA" \
-                  '{title: $title, body: $body}')"
-            else
-              echo "Issue ya existe: $TITLE"
-            fi
-          done
+      - name: Create Issues from Veracode results
+        uses: veracode/veracode-flaws-to-issues@v2.1.19
+        with:
+          scan-results-json: "sca-results.json"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
