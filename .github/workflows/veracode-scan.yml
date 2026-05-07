@@ -47,7 +47,7 @@ jobs:
           path: app.zip
 
           
-  sca_scan:
+  sca_scan_flow:
     runs-on: ubuntu-latest
     name: Veracode SCA
   
