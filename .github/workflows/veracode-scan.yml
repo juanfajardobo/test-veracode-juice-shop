@@ -46,6 +46,26 @@ jobs:
           name: app-build
           path: app.zip
 
+          
+  sca_scan:
+    runs-on: ubuntu-latest
+    name: Veracode SCA
+  
+    steps:
+      - uses: actions/checkout@v4
+  
+      - name: Run Veracode SCA
+        uses: veracode/veracode-sca@v2
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          create-issues: true
+          recursive: true
+          allow-dirty: true
+  
+        env:
+          SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+
+
 # =========================
 # SAST
 # =========================
@@ -73,7 +93,7 @@ jobs:
         with:
           name: sast-results
           path: results.json
-
+          
 # =========================
 # SCA
 # =========================
@@ -233,28 +253,4 @@ jobs:
         uses: veracode/veracode-flaws-to-issues@v2.1.19
         with:
           scan-results-json: "results.json"
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-
-  sca_issues:
-    name: Create GitHub Issues from SCA Veracode
-    needs: [sca_scan]
-    runs-on: ubuntu-latest
-  
-    permissions:
-      contents: read
-      issues: write
-  
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-  
-      - name: Download SCA results
-        uses: actions/download-artifact@v4
-        with:
-          name: sca-results
-  
-      - name: Create Issues from Veracode results
-        uses: veracode/veracode-flaws-to-issues@v2.1.19
-        with:
-          scan-results-json: "sca-results.json"
           github-token: ${{ secrets.GITHUB_TOKEN }}
