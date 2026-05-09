@@ -1,4 +1,4 @@
-name: Veracode Security Scan
+name: Veracode
 
 on:
   push:
@@ -7,98 +7,168 @@ on:
     branches: ["main"]
   workflow_dispatch:
 
-  
 permissions:
   contents: read
   issues: write
 
+env:
+  VERACODE_API_ID: ${{ secrets.VERACODE_API_ID }}
+  VERACODE_API_KEY: ${{ secrets.VERACODE_API_KEY }}
+  PROJECT_NAME: ${{ github.event.repository.name }}
+
 jobs:
-  security:
-    name: Veracode Security Pipeline
+
+  build:
+    runs-on: ubuntu-latest
+    name: Build  app.zip
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Package app
+        run: zip -r app.zip . -x "node_modules/*" ".git/*"  ".github/*" "test/*"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: app-build
+          path: app.zip
+
+# SAST
+  sast_scan:
+    needs: build
+    runs-on: ubuntu-latest
+    name: Veracode SAST
+
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: app-build
+
+      - name: Run Veracode Pipeline Scan
+        uses: veracode/Veracode-pipeline-scan-action@v1.0.20
+        with:
+          vid: ${{ secrets.VERACODE_API_ID }}
+          vkey: ${{ secrets.VERACODE_API_KEY }}
+          file: app.zip
+          fail_build: false
+          json_output: true
+          issue_details: true
+
+      - name: Upload SAST results
+        uses: actions/upload-artifact@v4
+        with:
+          name: sast-results
+          path: results.json
+          
+  sca_scan:
+    needs: build
+    runs-on: ubuntu-latest
+    name: Veracode SCA
+  
+    steps:
+      - uses: actions/checkout@v4
+  
+      - name: Run Veracode SCA
+        uses: veracode/veracode-sca@v2.1.18
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          create-issues: true
+          recursive: false
+          quick: true
+          allow-dirty: true 
+        env:
+          SRCCLR_API_TOKEN: ${{ secrets.SRCCLR_API_TOKEN }}
+  
+  veracode-scan:
+    name: Veracode Upload
+    needs: sca_scan
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout source code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Run Veracode Integration
-        uses: veracode/github-actions-integration@v1
-
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
         with:
-          veracode_config_path: ./veracode.yml
+          name: app-build
 
+      - name: Verify files
+        run: ls -lah
+
+      - name: Download Veracode Java API Wrapper
+        run: |
+          mkdir -p .veracode
+
+          VERSION=$(curl -sS https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/maven-metadata.xml | grep -oPm1 "(?<=<latest>)[^<]+")
+
+          if [ -z "$VERSION" ]; then
+            echo "::error::No se pudo obtener la version del API Wrapper"
+            exit 1
+          fi
+          echo "Descargando version: $VERSION"
+          curl -sSL \
+            "https://repo1.maven.org/maven2/com/veracode/vosp/api/wrappers/vosp-api-wrappers-java/${VERSION}/vosp-api-wrappers-java-${VERSION}-dist.zip" \
+            -o .veracode/dist.zip
+
+          cd .veracode
+          unzip -o dist.zip
+          cd ..
+
+          JAR_PATH=$(find .veracode -type f -name "VeracodeJavaAPI*.jar" | head -n1)
+
+          if [ -z "$JAR_PATH" ]; then
+            echo "::error::No se encontro VeracodeJavaAPI.jar"
+            exit 1
+          fi
+
+          cp "$JAR_PATH" vosp-api-wrapper-java.jar
+
+      - name: Upload to Veracode
         env:
-          VERACODE_API_KEY_ID: ${{ secrets.VERACODE_API_KEY_ID }}
-          VERACODE_API_KEY_SECRET: ${{ secrets.VERACODE_API_KEY_SECRET }}
+          VERACODE_API_ID: ${{ secrets.VERACODE_API_ID }}
+          VERACODE_API_KEY: ${{ secrets.VERACODE_API_KEY }}
 
-  veracode_static_scan:
-  push:
-    trigger: true
-
-    branches_to_run:
-      - main
-      - develop
-
-  pull_request:
-    trigger: true
-
-    action:
-      - opened
-      - synchronize
-
-    target_branch:
-      - main
-
-  # true = guarda resultados en Veracode Platform
-  # false = scan efímero/local CI
-  analysis_on_platform: false
-
-  break_build_policy_findings: true
-  break_build_invalid_policy: true
-  break_build_on_error: true
-
-  error_message: "Veracode SAST scan failed."
-
-  policy: "Veracode Recommended Medium + SCA"
-
-  # Mostrar findings en GitHub Security tab
-  create_code_scanning_alert: true
-
-  # Crear GitHub Issues automáticamente
-  create_issue: true
-
-  issues:
-    trigger: false
-
-    commands:
-      - "Veracode Static Scan"
-
-veracode_sca_scan:
-  push:
-    trigger: true
-
-    branches_to_run:
-      - main
-      - develop
-
-  pull_request:
-    trigger: true
-
-    action:
-      - opened
-      - synchronize
-
-    target_branch:
-      - main
-
-  break_build_on_error: true
-  break_build_policy_findings: true
-
-  error_message: "Veracode SCA scan failed."
-
-  issues:
-    trigger: false
-
-    commands:
-      - "Veracode SCA Scan"
-
+        run: |
+          java -jar vosp-api-wrapper-java.jar \
+            -vid "$VERACODE_API_ID" \
+            -vkey "$VERACODE_API_KEY" \
+            -action UploadAndScan \
+            -appname "${{ github.event.repository.name }}" \
+            -createprofile true \
+            -autoscan true \
+            -filepath "app.zip" \
+            -deleteincompletescan 1 \
+            -version "Release-${{ github.run_number }}"
+          
+  sast_issues:
+    name: Create GitHub Issues from SAST Veracode
+    needs: sast_scan
+    runs-on: ubuntu-latest
+  
+    permissions:
+      contents: read
+      issues: write 
+  
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+  
+      - name: Download SAST results
+        uses: actions/download-artifact@v4
+        with:
+          name: sast-results
+      - name: Check if vulnerabilities exist
+        run: |
+          if ! grep -q '"severity"' sast-results.json; then
+            echo "No vulnerabilities found"
+            exit 0
+          fi
+        
+      - name: Create Issues SAST results
+        uses: veracode/veracode-flaws-to-issues@v2.1.19
+        with:
+          scan-results-json: "results.json"
+          github-token: ${{ secrets.GITHUB_TOKEN }}
